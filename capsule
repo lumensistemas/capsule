@@ -12,7 +12,7 @@
 #   CAPSULE_FIREWALL=0 capsule # same as --no-firewall, via env
 #   CAPSULE_VOICE=1   capsule  # same as --voice, via env
 #   CAPSULE_SAIL=name capsule  # same as --sail=name, via env
-#   CAPSULE_NAME=foo  capsule  # named container (default: capsule-<dir>)
+#   CAPSULE_NAME=foo  capsule  # stable container name (default: capsule-<dir>-<pid>)
 #
 # Setup:
 #   capsule --install          # symlink ~/.local/bin/capsule -> here
@@ -29,7 +29,10 @@
 set -euo pipefail
 
 IMAGE="${CAPSULE_IMAGE:-capsule:latest}"
-CONTAINER_NAME="${CAPSULE_NAME:-capsule-$(basename "$PWD")}"
+# Auto-derived name gets the shell PID as a suffix so multiple capsules can
+# run in parallel from the same directory. Set CAPSULE_NAME for a stable name
+# (e.g. when scripting `docker exec`).
+CONTAINER_NAME="${CAPSULE_NAME:-capsule-$(basename "$PWD")-$$}"
 # Resolve symlinks so SCRIPT_DIR points at the cloned repo even when the
 # launcher is invoked through ~/.local/bin/capsule (see --install).
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
