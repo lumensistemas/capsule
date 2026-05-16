@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip zip xz-utils \
         ripgrep fd-find jq \
         iptables ipset dnsutils aggregate iproute2 \
+        pulseaudio-utils alsa-utils sox libsox-fmt-all \
         build-essential pkg-config \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*

@@ -6,8 +6,10 @@
 #   capsule                    # interactive shell in $PWD (firewall ON)
 #   capsule nvim .             # one-off command (firewall ON)
 #   capsule --no-firewall      # open shell with full network access
+#   capsule --voice            # forward host PulseAudio/PipeWire socket
 #   CAPSULE_FIREWALL=0 capsule # same, via env
-#   CAPSULE_NAME=foo capsule   # named container (default: capsule-<dir>)
+#   CAPSULE_VOICE=1   capsule  # same, via env
+#   CAPSULE_NAME=foo  capsule  # named container (default: capsule-<dir>)
 #
 # Setup:
 #   capsule --install          # symlink ~/.local/bin/capsule -> here
@@ -15,6 +17,7 @@
 #
 # The firewall restricts outbound traffic to a small allowlist (Anthropic,
 # GitHub, npm, packagist, host LAN). Disable when you need wider access.
+# Voice is off by default; enable when an AI agent needs mic/speakers.
 #
 # Re-run with `--build` to force a rebuild, or `--rm-volumes` to wipe the
 # persisted config volumes (claude/gh/copilot/nvim/history).
@@ -81,12 +84,20 @@ case "${1:-}" in
         ;;
 esac
 
-# --- Firewall flag (default ON) ------------------------------------------
+# --- Flags ---------------------------------------------------------------
+# Firewall defaults ON; voice defaults OFF. Both accept matching env vars
+# and a flag (the flag wins). Multiple flags can stack in any order.
 firewall="${CAPSULE_FIREWALL:-1}"
-case "${1:-}" in
-    --no-firewall) firewall=0; shift ;;
-    --firewall)    firewall=1; shift ;;  # explicit, same as default
-esac
+voice="${CAPSULE_VOICE:-0}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-firewall) firewall=0; shift ;;
+        --firewall)    firewall=1; shift ;;
+        --voice)       voice=1;    shift ;;
+        --no-voice)    voice=0;    shift ;;
+        *) break ;;
+    esac
+done
 
 # --- Build image on first use --------------------------------------------
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -129,6 +140,22 @@ for f in common.conf gpg.conf; do
         mounts+=(-v "$HOME/.gnupg/$f:/home/dev/.gnupg/$f:ro")
     fi
 done
+
+# Audio (--voice): forward the host's PulseAudio/PipeWire socket so
+# pactl/parecord/paplay/sox work for mic + speaker passthrough. Local
+# Unix socket only — firewall is unaffected.
+if [ "$voice" = "1" ]; then
+    pulse_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse"
+    if [ -S "$pulse_dir/native" ]; then
+        mounts+=(-v "$pulse_dir:$pulse_dir")
+        envs+=(-e "PULSE_SERVER=unix:$pulse_dir/native")
+        if [ -f "$HOME/.config/pulse/cookie" ]; then
+            mounts+=(-v "$HOME/.config/pulse/cookie:/home/dev/.config/pulse/cookie:ro")
+        fi
+    else
+        echo "capsule: warning — --voice requested but no pulse socket at $pulse_dir/native" >&2
+    fi
+fi
 
 # Git config (read-only)
 if [ -f "$HOME/.gitconfig" ]; then

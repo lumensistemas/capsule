@@ -43,6 +43,8 @@ capsule nvim .           # open the project in nvim
 Flags:
 
 - `--no-firewall` — disable the outbound allowlist (see below)
+- `--voice` — forward host PulseAudio/PipeWire socket (see below)
+- `--install` / `--uninstall` — manage the `~/.local/bin/capsule` symlink
 - `--build` — force rebuild the image
 - `--rm-volumes` — wipe persisted configs (Claude, gh, copilot, nvim, history)
 - `--help`
@@ -53,6 +55,7 @@ Env overrides:
 CAPSULE_NAME=mything capsule       # custom container name
 CAPSULE_IMAGE=capsule:dev capsule  # use a different tag
 CAPSULE_FIREWALL=0 capsule         # same as --no-firewall
+CAPSULE_VOICE=1 capsule            # same as --voice
 ```
 
 ## Firewall (default ON)
@@ -112,6 +115,25 @@ Named volumes (`docker volume ls | grep capsule`):
 
 Everything else (composer cache, npm cache, /tmp) is ephemeral by design —
 the container is disposable.
+
+## Voice / audio (opt-in)
+
+`capsule --voice` forwards the host's PulseAudio/PipeWire socket into the
+container so AI agents (or any tool inside) can use the mic and speakers.
+The image ships `pulseaudio-utils`, `alsa-utils`, `sox`, and
+`libsox-fmt-all`; the launcher mounts `$XDG_RUNTIME_DIR/pulse` and sets
+`PULSE_SERVER`. Unix socket only, so the firewall is unaffected.
+
+Quick test inside the capsule:
+
+```bash
+pactl info             # should show your host's audio server
+parecord test.wav      # records from default input
+paplay test.wav
+```
+
+If you see no pulse socket on the host (headless server, etc.), `--voice`
+prints a warning and skips the mount.
 
 ## How git signing works
 
