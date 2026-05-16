@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# capsule — launch the dev container with the current directory mounted at
+# /workspace. Builds the image on first run.
+#
+# Usage:
+#   capsule                    # interactive shell in $PWD (firewall ON)
+#   capsule nvim .             # one-off command (firewall ON)
+#   capsule --no-firewall      # open shell with full network access
+#   CAPSULE_FIREWALL=0 capsule # same, via env
+#   CAPSULE_NAME=foo capsule   # named container (default: capsule-<dir>)
+#
+# Setup:
+#   capsule --install          # symlink ~/.local/bin/capsule -> here
+#   capsule --uninstall        # remove the symlink
+#
+# The firewall restricts outbound traffic to a small allowlist (Anthropic,
+# GitHub, npm, packagist, host LAN). Disable when you need wider access.
+#
+# Re-run with `--build` to force a rebuild, or `--rm-volumes` to wipe the
+# persisted config volumes (claude/gh/copilot/nvim/history).
+set -euo pipefail
+
+IMAGE="${CAPSULE_IMAGE:-capsule:latest}"
+CONTAINER_NAME="${CAPSULE_NAME:-capsule-$(basename "$PWD")}"
+# Resolve symlinks so SCRIPT_DIR points at the cloned repo even when the
+# launcher is invoked through ~/.local/bin/capsule (see --install).
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# --- Subcommands ----------------------------------------------------------
+case "${1:-}" in
+    --build)
+        shift
+        exec docker build -t "$IMAGE" "$SCRIPT_DIR"
+        ;;
+    --rm-volumes)
+        shift
+        docker volume rm -f \
+            capsule-claude capsule-gh capsule-copilot \
+            capsule-nvim capsule-nvim-data capsule-nvim-state \
+            capsule-history
+        echo "capsule: persistent volumes removed."
+        exit 0
+        ;;
+    --install)
+        target_dir="${HOME}/.local/bin"
+        target="${target_dir}/capsule"
+        mkdir -p "$target_dir"
+        if [ -e "$target" ] && [ ! -L "$target" ]; then
+            echo "capsule: $target exists and is not a symlink — refusing to overwrite" >&2
+            exit 1
+        fi
+        if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$SCRIPT_DIR/capsule" ]; then
+            echo "capsule: already installed at $target"
+            exit 0
+        fi
+        ln -sf "$SCRIPT_DIR/capsule" "$target"
+        echo "capsule: installed $target -> $SCRIPT_DIR/capsule"
+        case ":$PATH:" in
+            *":$target_dir:"*) ;;
+            *) echo "capsule: warning — $target_dir is not on \$PATH; add it to your shell rc." >&2 ;;
+        esac
+        exit 0
+        ;;
+    --uninstall)
+        target="${HOME}/.local/bin/capsule"
+        if [ -L "$target" ]; then
+            rm -v "$target"
+        elif [ -e "$target" ]; then
+            echo "capsule: $target exists but is not a symlink — leaving it alone" >&2
+            exit 1
+        else
+            echo "capsule: nothing installed at $target"
+        fi
+        exit 0
+        ;;
+    -h|--help)
+        sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+esac
+
+# --- Firewall flag (default ON) ------------------------------------------
+firewall="${CAPSULE_FIREWALL:-1}"
+case "${1:-}" in
+    --no-firewall) firewall=0; shift ;;
+    --firewall)    firewall=1; shift ;;  # explicit, same as default
+esac
+
+# --- Build image on first use --------------------------------------------
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "capsule: image '$IMAGE' not found, building from $SCRIPT_DIR ..."
+    docker build -t "$IMAGE" "$SCRIPT_DIR"
+fi
+
+# --- Optional host mounts (only if present) ------------------------------
+mounts=()
+envs=()
+
+# SSH: keys read-only + agent socket if available
+if [ -d "$HOME/.ssh" ]; then
+    mounts+=(-v "$HOME/.ssh:/home/dev/.ssh:ro")
+fi
+if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+    mounts+=(-v "$SSH_AUTH_SOCK:/ssh-agent")
+    envs+=(-e SSH_AUTH_SOCK=/ssh-agent)
+fi
+
+# GPG: forward the host's runtime socket dir (where modern gnupg keeps its
+# gpg-agent + keyboxd sockets) so the container's gpg talks to the host's
+# agent for both pubkey lookup and signing. We deliberately do NOT bind
+# mount ~/.gnupg — that causes keyring lock contention with the host agent
+# and (worse) lets in-container mount overlays pollute the host directory.
+if command -v gpgconf >/dev/null 2>&1; then
+    gpg_sockdir="$(gpgconf --list-dirs socketdir 2>/dev/null || true)"
+    if [ -n "$gpg_sockdir" ] && [ -d "$gpg_sockdir" ]; then
+        # Mount host's socketdir at the same path inside the container so
+        # gpg's compiled-in defaults find it. Container UID 1000 == host UID
+        # 1000 in the typical case, so socket perms (srw-------) Just Work.
+        mounts+=(-v "$gpg_sockdir:$gpg_sockdir")
+        envs+=(-e "XDG_RUNTIME_DIR=$(dirname "$gpg_sockdir")")
+    fi
+fi
+# GPG config files (read-only) so container's gpg uses the same backend
+# (keyboxd vs legacy) and default key as the host.
+for f in common.conf gpg.conf; do
+    if [ -f "$HOME/.gnupg/$f" ]; then
+        mounts+=(-v "$HOME/.gnupg/$f:/home/dev/.gnupg/$f:ro")
+    fi
+done
+
+# Git config (read-only)
+if [ -f "$HOME/.gitconfig" ]; then
+    mounts+=(-v "$HOME/.gitconfig:/home/dev/.gitconfig:ro")
+fi
+if [ -d "$HOME/.config/git" ]; then
+    mounts+=(-v "$HOME/.config/git:/home/dev/.config/git:ro")
+fi
+
+# --- Persistent named volumes for tool configs ---------------------------
+mounts+=(
+    -v capsule-claude:/home/dev/.claude
+    -v capsule-gh:/home/dev/.config/gh
+    -v capsule-copilot:/home/dev/.config/github-copilot
+    -v capsule-nvim:/home/dev/.config/nvim
+    -v capsule-nvim-data:/home/dev/.local/share/nvim
+    -v capsule-nvim-state:/home/dev/.local/state/nvim
+    -v capsule-history:/home/dev/.history
+)
+
+# --- Firewall: caps + env ------------------------------------------------
+# Always pass the env explicitly (the entrypoint defaults to ON, so we must
+# set 0 explicitly when disabling). Caps are only granted when needed.
+cap_args=()
+envs+=(-e "CAPSULE_FIREWALL=$firewall")
+if [ "$firewall" = "1" ]; then
+    cap_args+=(--cap-add=NET_ADMIN --cap-add=NET_RAW)
+fi
+
+# --- Run -----------------------------------------------------------------
+# Allocate a TTY only when one is actually attached, so the launcher works
+# from scripts and pipes too.
+tty_args=(-i)
+if [ -t 0 ] && [ -t 1 ]; then tty_args+=(-t); fi
+
+exec docker run "${tty_args[@]}" --rm \
+    --name "$CONTAINER_NAME" \
+    --hostname capsule \
+    -v "$PWD:/workspace" \
+    -w /workspace \
+    "${mounts[@]}" \
+    "${envs[@]}" \
+    "${cap_args[@]}" \
+    "$IMAGE" "$@"

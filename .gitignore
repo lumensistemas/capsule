@@ -1,0 +1,17 @@
+# Editor / OS noise
+*~
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Local overrides
+.env
+.env.local
+*.local
+
+# Backup files
+*.bak
+*.orig
