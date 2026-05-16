@@ -7,8 +7,11 @@
 #   capsule nvim .             # one-off command (firewall ON)
 #   capsule --no-firewall      # open shell with full network access
 #   capsule --voice            # forward host PulseAudio/PipeWire socket
-#   CAPSULE_FIREWALL=0 capsule # same, via env
-#   CAPSULE_VOICE=1   capsule  # same, via env
+#   capsule --sail             # attach to Laravel Sail's docker network
+#   capsule --sail=foo_sail    # ...with a non-default network name
+#   CAPSULE_FIREWALL=0 capsule # same as --no-firewall, via env
+#   CAPSULE_VOICE=1   capsule  # same as --voice, via env
+#   CAPSULE_SAIL=name capsule  # same as --sail=name, via env
 #   CAPSULE_NAME=foo  capsule  # named container (default: capsule-<dir>)
 #
 # Setup:
@@ -18,6 +21,8 @@
 # The firewall restricts outbound traffic to a small allowlist (Anthropic,
 # GitHub, npm, packagist, host LAN). Disable when you need wider access.
 # Voice is off by default; enable when an AI agent needs mic/speakers.
+# --sail / --laravel attaches the capsule to Sail's docker network so
+# mariadb/mailpit/etc. are reachable by service name.
 #
 # Re-run with `--build` to force a rebuild, or `--rm-volumes` to wipe the
 # persisted config volumes (claude/gh/copilot/nvim/history).
@@ -85,16 +90,21 @@ case "${1:-}" in
 esac
 
 # --- Flags ---------------------------------------------------------------
-# Firewall defaults ON; voice defaults OFF. Both accept matching env vars
-# and a flag (the flag wins). Multiple flags can stack in any order.
+# Firewall defaults ON; voice + sail default OFF. All accept matching env
+# vars and flags (flag wins). Multiple flags can stack in any order.
 firewall="${CAPSULE_FIREWALL:-1}"
 voice="${CAPSULE_VOICE:-0}"
+sail_network="${CAPSULE_SAIL:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
-        --no-firewall) firewall=0; shift ;;
-        --firewall)    firewall=1; shift ;;
-        --voice)       voice=1;    shift ;;
-        --no-voice)    voice=0;    shift ;;
+        --no-firewall)       firewall=0; shift ;;
+        --firewall)          firewall=1; shift ;;
+        --voice)             voice=1;    shift ;;
+        --no-voice)          voice=0;    shift ;;
+        --sail|--laravel)    sail_network="sail"; shift ;;
+        --sail=*)            sail_network="${1#--sail=}"; shift ;;
+        --laravel=*)         sail_network="${1#--laravel=}"; shift ;;
+        --no-sail|--no-laravel) sail_network=""; shift ;;
         *) break ;;
     esac
 done
@@ -185,6 +195,21 @@ if [ "$firewall" = "1" ]; then
     cap_args+=(--cap-add=NET_ADMIN --cap-add=NET_RAW)
 fi
 
+# --- Sail / Laravel network ----------------------------------------------
+# When set, attach the capsule to that user-defined docker network so
+# `php artisan test`, composer scripts, etc. can reach mariadb/mailpit/etc.
+# by their compose service name via Docker's embedded DNS.
+net_args=()
+if [ -n "$sail_network" ]; then
+    if ! docker network inspect "$sail_network" >/dev/null 2>&1; then
+        echo "capsule: error — docker network '$sail_network' not found" >&2
+        echo "         hint: start Laravel Sail first ('./vendor/bin/sail up -d')," >&2
+        echo "               or pass --sail=<actual_network_name>" >&2
+        exit 1
+    fi
+    net_args+=(--network "$sail_network")
+fi
+
 # --- Run -----------------------------------------------------------------
 # Allocate a TTY only when one is actually attached, so the launcher works
 # from scripts and pipes too.
@@ -199,4 +224,5 @@ exec docker run "${tty_args[@]}" --rm \
     "${mounts[@]}" \
     "${envs[@]}" \
     "${cap_args[@]}" \
+    "${net_args[@]}" \
     "$IMAGE" "$@"

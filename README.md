@@ -44,6 +44,7 @@ Flags:
 
 - `--no-firewall` — disable the outbound allowlist (see below)
 - `--voice` — forward host PulseAudio/PipeWire socket (see below)
+- `--sail` / `--laravel` — attach to Laravel Sail's docker network (see below)
 - `--install` / `--uninstall` — manage the `~/.local/bin/capsule` symlink
 - `--build` — force rebuild the image
 - `--rm-volumes` — wipe persisted configs (Claude, gh, copilot, nvim, history)
@@ -56,6 +57,7 @@ CAPSULE_NAME=mything capsule       # custom container name
 CAPSULE_IMAGE=capsule:dev capsule  # use a different tag
 CAPSULE_FIREWALL=0 capsule         # same as --no-firewall
 CAPSULE_VOICE=1 capsule            # same as --voice
+CAPSULE_SAIL=foo_sail capsule      # same as --sail=foo_sail
 ```
 
 ## Firewall (default ON)
@@ -134,6 +136,37 @@ paplay test.wav
 
 If you see no pulse socket on the host (headless server, etc.), `--voice`
 prints a warning and skips the mount.
+
+## Laravel Sail (`--sail` / `--laravel`)
+
+When you're running `./vendor/bin/sail up`, your services (`mariadb`,
+`mailpit`, `redis`, etc.) live on a docker network — by default named
+`sail`. Pass `--sail` to attach the capsule to that network:
+
+```bash
+sail up -d                                # start your services
+capsule --sail                            # capsule joins the sail net
+> php artisan test                        # DB connections to "mariadb" work
+> php artisan tinker
+>>> Mail::raw('hi', fn ($m) => $m->to('x@y'));   # delivered to mailpit
+```
+
+If Compose uses a project prefix (e.g. `myapp_sail`), pass it explicitly:
+
+```bash
+capsule --sail=myapp_sail
+```
+
+Notes:
+
+- The capsule attaches to *only* the sail network (loses the default
+  bridge). Internet still works because the sail network is a bridge with
+  NAT — the firewall allowlist applies as usual.
+- The firewall's "host LAN" rule auto-detects the gateway+/24 from the
+  default route, so the rest of the sail subnet (mariadb, etc.) is
+  allowed alongside the public allowlist.
+- If the network doesn't exist, the launcher exits with a hint to start
+  Sail first.
 
 ## How git signing works
 
