@@ -116,6 +116,12 @@ RUN echo '[ -f /etc/profile.d/capsule.sh ] && . /etc/profile.d/capsule.sh' \
         >> /home/${USER_NAME}/.bashrc \
     && chown ${USER_UID}:${USER_GID} /home/${USER_NAME}/.bashrc
 
+# --- tmux config ---------------------------------------------------------
+# Loaded by tmux automatically from ~/.config/tmux/tmux.conf. Lives in the
+# image (not a mounted volume) so updates ship with the Dockerfile.
+COPY --chown=${USER_UID}:${USER_GID} \
+    etc/tmux.conf /home/${USER_NAME}/.config/tmux/tmux.conf
+
 # --- Entrypoint + helper scripts -----------------------------------------
 COPY etc/entrypoint.sh /usr/local/bin/capsule-entrypoint
 COPY etc/firewall.sh   /usr/local/bin/capsule-firewall
@@ -129,4 +135,10 @@ WORKDIR /workspace
 ENV HOME=/home/${USER_NAME} \
     SHELL=/bin/bash
 ENTRYPOINT ["/usr/local/bin/capsule-entrypoint"]
-CMD ["bash", "-l"]
+# Default command: launch a tmux session. Wrapped in a tiny loop so that
+# `prefix-d` (detach) re-attaches instead of dropping out of the foreground
+# entrypoint and killing the --rm container. Exit cleanly via `prefix-K`
+# (kill-session) or by exiting the last pane.
+# When the user passes a command (`capsule nvim .`), Docker replaces this
+# CMD entirely, so one-off commands skip tmux and run directly.
+CMD ["bash", "-c", "tmux new-session -A -s capsule; while tmux has-session -t capsule 2>/dev/null; do tmux attach -t capsule; done"]

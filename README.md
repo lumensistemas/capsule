@@ -35,9 +35,9 @@ Remove later with `capsule --uninstall`.
 
 ```bash
 cd ~/projects/some-php-app
-capsule                  # interactive shell, $PWD mounted at /workspace
-capsule php artisan test # one-off command
-capsule nvim .           # open the project in nvim
+capsule                  # tmux session, $PWD mounted at /workspace
+capsule php artisan test # one-off command (no tmux)
+capsule nvim .           # open the project in nvim (no tmux)
 ```
 
 Flags:

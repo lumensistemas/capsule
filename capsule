@@ -3,8 +3,8 @@
 # /workspace. Builds the image on first run.
 #
 # Usage:
-#   capsule                    # interactive shell in $PWD (firewall ON)
-#   capsule nvim .             # one-off command (firewall ON)
+#   capsule                    # tmux session in $PWD (firewall ON)
+#   capsule nvim .             # one-off command, no tmux (firewall ON)
 #   capsule --no-firewall      # open shell with full network access
 #   capsule --voice            # forward host PulseAudio/PipeWire socket
 #   capsule --sail             # attach to Laravel Sail's docker network
