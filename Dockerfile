@@ -34,7 +34,8 @@ RUN add-apt-repository -y ppa:ondrej/php \
          apt-get install -y --no-install-recommends \
             php${v}-cli php${v}-common php${v}-readline \
             php${v}-curl php${v}-mbstring php${v}-xml php${v}-zip \
-            php${v}-sqlite3 php${v}-intl php${v}-bcmath php${v}-gd; \
+            php${v}-sqlite3 php${v}-intl php${v}-bcmath php${v}-gd \
+            php${v}-pcov; \
          apt-get install -y --no-install-recommends php${v}-opcache 2>/dev/null \
             || echo "note: php${v}-opcache not available, skipping (likely bundled in -cli)"; \
        done \
